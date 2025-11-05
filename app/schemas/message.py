@@ -24,6 +24,7 @@ class MessageRead(BaseModel):
     type: str
     content: str | None
     payload: dict | None
+    status: str  # delivered, read
     ts: datetime
 
     model_config = {"from_attributes": True}

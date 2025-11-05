@@ -16,6 +16,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    tag: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
@@ -61,7 +62,24 @@ class Message(Base):
     type: Mapped[str] = mapped_column(String(50), nullable=False)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="delivered", index=True)
     ts: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
 
     chat: Mapped[Chat] = relationship(back_populates="messages")
     author: Mapped[User | None] = relationship(back_populates="messages")
+    reads: Mapped[list["MessageRead"]] = relationship(back_populates="message", cascade="all, delete-orphan")
+
+
+class MessageRead(Base):
+    __tablename__ = "message_reads"
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", name="uq_message_read"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    read_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    message: Mapped[Message] = relationship(back_populates="reads")
+    user: Mapped[User] = relationship()

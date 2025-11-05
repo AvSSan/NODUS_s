@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -53,4 +54,7 @@ async def run_migrations_online() -> None:
 if context.is_offline_mode():
     run_migrations_offline()
 else:
+    # На Windows psycopg требует SelectorEventLoop вместо ProactorEventLoop
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(run_migrations_online())

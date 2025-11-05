@@ -32,12 +32,22 @@ class AuthService:
             raise AuthenticationError("Email already registered")
 
         password_hash = get_password_hash(password)
+        
+        # Создаём пользователя с временным тегом
+        temp_tag = "temp_" + email.split('@')[0][:20]
         user = await self.users.create(
             email=email,
             password_hash=password_hash,
             display_name=display_name,
+            tag=temp_tag,
             avatar_url=avatar_url,
         )
+        await self.session.flush()
+        
+        # Генерируем настоящий тег на основе email и id
+        initial_tag = self.users.generate_initial_tag(email, user.id)
+        user.tag = initial_tag
+        
         await self.session.commit()
         await self.session.refresh(user)
         return user

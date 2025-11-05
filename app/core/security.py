@@ -3,20 +3,30 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import bcrypt
+
 from app.core import jwt
-from passlib.context import CryptContext
-
 from app.core.config import settings
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    """Проверяет пароль против хеша"""
+    password_bytes = plain_password.encode('utf-8')
+    # bcrypt автоматически обрезает до 72 байт, но лучше сделать явно
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+    return bcrypt.checkpw(password_bytes, hashed_password.encode('utf-8'))
 
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    """Создает bcrypt хеш пароля"""
+    password_bytes = password.encode('utf-8')
+    # bcrypt ограничен 72 байтами
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
 
 def create_token(*, subject: str | None, expires_delta: timedelta, secret_key: str) -> str:

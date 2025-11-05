@@ -11,11 +11,12 @@ dependencies = [
   "sqlalchemy[asyncio]>=2.0.29",
   "pydantic>=2.6.4",
   "pydantic-settings>=2.2.1",
+  "email-validator>=2.1.0",
   "alembic>=1.13.1",
   "psycopg[binary,pool]>=3.1.18",
   "redis>=5.0.3",
   "rq>=1.15.1",
-  "passlib[bcrypt]>=1.7.4",
+  "bcrypt>=4.0.0",
   "orjson>=3.10.0",
 ]
 
@@ -33,6 +34,9 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.setuptools]
+packages = ["app", "app.api", "app.api.v1", "app.core", "app.db", "app.domain", "app.repositories", "app.schemas", "app.services", "app.workers"]
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
