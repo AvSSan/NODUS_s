@@ -88,6 +88,7 @@ async def delete_chat(
     current_user: int = Depends(get_current_user),
     idempotency: tuple[str, IdempotencyService] = Depends(require_idempotency),
     session: AsyncSession = Depends(get_session),
+    redis = Depends(get_redis),
 ) -> None:
     key, service = idempotency
     chat = await get_chat_or_404(chat_id, session)
@@ -95,8 +96,8 @@ async def delete_chat(
     member = await member_repo.get_member(chat_id=chat_id, user_id=current_user)
     if member is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    chat_service = ChatService(session)
-    await chat_service.delete_chat(chat)
+    chat_service = ChatService(session, redis)
+    await chat_service.delete_chat(chat, deleted_by=current_user)
     await service.mark_completed(key)
 
 

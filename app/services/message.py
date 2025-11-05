@@ -5,11 +5,13 @@ import logging
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.domain.models import Message
+from app.domain.models import Message, MessageReaction
 from app.repositories.chat import ChatMemberRepository
 from app.repositories.message import MessageRepository
 from app.repositories.message_read import MessageReadRepository
+from app.repositories.message_reaction import MessageReactionRepository
 
 VOICE_REQUIRED_KEYS = {"attachment_id", "duration_ms", "codec"}
 
@@ -23,6 +25,7 @@ class MessageService:
         self.messages = MessageRepository(session)
         self.chat_members = ChatMemberRepository(session)
         self.message_reads = MessageReadRepository(session)
+        self.reactions = MessageReactionRepository(session)
 
     async def create_message(
         self,
@@ -32,23 +35,35 @@ class MessageService:
         type: str,
         content: str | None,
         payload: dict | None,
+        reply_to_id: int | None = None,
     ) -> Message:
         self._validate_payload(type, payload)
+        
+        # Проверка существования сообщения, на которое отвечаем
+        if reply_to_id is not None:
+            reply_message = await self.messages.get(reply_to_id)
+            if not reply_message or reply_message.chat_id != chat_id:
+                raise ValueError("Reply message not found or belongs to different chat")
+        
         message = await self.messages.create(
             chat_id=chat_id,
             author_id=author_id,
             type=type,
             content=content,
             payload=payload,
+            reply_to_id=reply_to_id,
         )
-        # Устанавливаем статус "delivered" при создании
         message.status = "delivered"
         await self.session.commit()
-        await self.session.refresh(message)
+        # Явная загрузка reactions для избежания ошибки MissingGreenlet при сериализации
+        await self.session.refresh(message, ["reactions"])
         await self._publish_event("message.created", message)
         return message
 
     async def update_message(self, message: Message, *, content: str | None, payload: dict | None) -> Message:
+        if message.is_deleted:
+            raise ValueError("Cannot update deleted message")
+        
         if payload is not None:
             self._validate_payload(message.type, payload)
         if content is not None:
@@ -59,6 +74,60 @@ class MessageService:
         await self.session.refresh(message)
         await self._publish_event("message.updated", message)
         return message
+
+    async def delete_message(self, message: Message) -> Message:
+        """Мягкое удаление сообщения"""
+        if message.is_deleted:
+            raise ValueError("Message already deleted")
+        
+        message = await self.messages.soft_delete(message)
+        await self.session.commit()
+        await self.session.refresh(message)
+        await self._publish_event("message.deleted", message)
+        return message
+
+    async def add_reaction(self, message_id: int, user_id: int, emoji: str) -> MessageReaction:
+        """Добавить реакцию на сообщение"""
+        # Проверяем существование реакции
+        existing = await self.reactions.get_user_reaction(
+            message_id=message_id, user_id=user_id, emoji=emoji
+        )
+        if existing:
+            raise ValueError("Reaction already exists")
+        
+        reaction = await self.reactions.add_reaction(
+            message_id=message_id, user_id=user_id, emoji=emoji
+        )
+        await self.session.commit()
+        await self.session.refresh(reaction)
+        
+        # Получаем сообщение для определения участников чата
+        message = await self.messages.get(message_id)
+        if message:
+            await self._publish_reaction_event("reaction.added", message.chat_id, reaction)
+        
+        return reaction
+
+    async def remove_reaction(self, message_id: int, user_id: int, emoji: str) -> bool:
+        """Удалить реакцию с сообщения"""
+        # Получаем сообщение для определения участников чата
+        message = await self.messages.get(message_id)
+        if not message:
+            return False
+        
+        success = await self.reactions.remove_reaction(
+            message_id=message_id, user_id=user_id, emoji=emoji
+        )
+        
+        if success:
+            await self.session.commit()
+            await self._publish_reaction_event(
+                "reaction.removed",
+                message.chat_id,
+                {"message_id": message_id, "user_id": user_id, "emoji": emoji},
+            )
+        
+        return success
 
     def _validate_payload(self, message_type: str, payload: dict | None) -> None:
         if message_type == "voice":
@@ -81,8 +150,12 @@ class MessageService:
                 "type": message.type,
                 "content": message.content,
                 "payload": message.payload,
-                "status": message.status,  # Добавляем статус
+                "status": message.status,
                 "ts": message.ts.isoformat(),
+                "reply_to_id": message.reply_to_id,
+                "is_deleted": message.is_deleted,
+                "deleted_at": message.deleted_at.isoformat() if message.deleted_at else None,
+                "updated_at": message.updated_at.isoformat() if message.updated_at else None,
             },
         }
         payload_json = json.dumps(payload)
@@ -94,6 +167,34 @@ class MessageService:
             logger.debug(f"Published {event} to user {user_id} for message {message.id}")
         
         logger.info(f"Broadcast {event} to {len(participant_ids)} participants in chat {message.chat_id}")
+
+    async def _publish_reaction_event(self, event: str, chat_id: int, data) -> None:
+        """Отправить WebSocket событие о реакции всем участникам чата"""
+        participant_ids = await self.chat_members.list_participant_ids(chat_id)
+        
+        # Формируем payload для реакции
+        if isinstance(data, MessageReaction):
+            payload = {
+                "event": event,
+                "data": {
+                    "id": data.id,
+                    "message_id": data.message_id,
+                    "user_id": data.user_id,
+                    "emoji": data.emoji,
+                    "created_at": data.created_at.isoformat(),
+                },
+            }
+        else:
+            payload = {"event": event, "data": data}
+        
+        payload_json = json.dumps(payload)
+        
+        for user_id in participant_ids:
+            channel = f"ws:user:{user_id}"
+            await self.redis.publish(channel, payload_json)
+            logger.debug(f"Published {event} to user {user_id}")
+        
+        logger.info(f"Broadcast {event} to {len(participant_ids)} participants in chat {chat_id}")
 
     async def mark_messages_as_read(self, chat_id: int, user_id: int) -> list[int]:
         """

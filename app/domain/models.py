@@ -64,10 +64,20 @@ class Message(Base):
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="delivered", index=True)
     ts: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
+    
+    # Новые поля
+    reply_to_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"), index=True, nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(onupdate=func.now(), nullable=True)
 
     chat: Mapped[Chat] = relationship(back_populates="messages")
     author: Mapped[User | None] = relationship(back_populates="messages")
     reads: Mapped[list["MessageRead"]] = relationship(back_populates="message", cascade="all, delete-orphan")
+    reactions: Mapped[list["MessageReaction"]] = relationship(back_populates="message", cascade="all, delete-orphan")
+    
+    # Self-referential relationship для ответов
+    reply_to: Mapped["Message | None"] = relationship("Message", remote_side=[id], foreign_keys=[reply_to_id])
 
 
 class MessageRead(Base):
@@ -82,4 +92,21 @@ class MessageRead(Base):
     read_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     message: Mapped[Message] = relationship(back_populates="reads")
+    user: Mapped[User] = relationship()
+
+
+class MessageReaction(Base):
+    __tablename__ = "message_reactions"
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", "emoji", name="uq_message_reaction"),
+        Index("ix_message_reactions_message_id", "message_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    emoji: Mapped[str] = mapped_column(String(10), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    message: Mapped[Message] = relationship(back_populates="reactions")
     user: Mapped[User] = relationship()

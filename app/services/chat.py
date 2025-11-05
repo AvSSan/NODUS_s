@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import json
+import logging
+
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import Chat
 from app.repositories.chat import ChatMemberRepository, ChatRepository
 from app.repositories.user import UserRepository
 
+logger = logging.getLogger(__name__)
+
 
 class ChatService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, redis: Redis | None = None):
         self.session = session
+        self.redis = redis
         self.chats = ChatRepository(session)
         self.members = ChatMemberRepository(session)
         self.users = UserRepository(session)
@@ -30,9 +37,22 @@ class ChatService:
         await self.session.refresh(chat)
         return chat
 
-    async def delete_chat(self, chat: Chat) -> None:
+    async def delete_chat(self, chat: Chat, deleted_by: int) -> None:
+        """Удалить чат и отправить WebSocket событие всем участникам"""
+        chat_id = chat.id
+        
+        # Получаем список участников ДО удаления чата
+        participant_ids = await self.members.list_participant_ids(chat_id)
+        
+        # Удаляем чат
         await self.session.delete(chat)
         await self.session.commit()
+        
+        # Отправляем WebSocket событие всем участникам
+        if self.redis:
+            await self._publish_chat_deleted_event(chat_id, deleted_by, participant_ids)
+        else:
+            logger.warning(f"Redis not available, chat.deleted event not sent for chat {chat_id}")
 
     async def create_or_get_direct_message(self, user1_id: int, user2_id: int) -> Chat:
         """Создать или получить существующую личную переписку между двумя пользователями"""
@@ -63,3 +83,24 @@ class ChatService:
         # Перезагружаем чат с участниками
         chat = await self.chats.get(chat.id)
         return chat
+
+    async def _publish_chat_deleted_event(
+        self, chat_id: int, deleted_by: int, participant_ids: list[int]
+    ) -> None:
+        """Отправить WebSocket событие chat.deleted всем участникам чата"""
+        payload = {
+            "event": "chat.deleted",
+            "data": {
+                "id": chat_id,
+                "deleted_by": deleted_by,
+            },
+        }
+        payload_json = json.dumps(payload)
+        
+        # Отправляем событие в персональный канал каждого участника
+        for user_id in participant_ids:
+            channel = f"ws:user:{user_id}"
+            await self.redis.publish(channel, payload_json)
+            logger.debug(f"Published chat.deleted to user {user_id} for chat {chat_id}")
+        
+        logger.info(f"Broadcast chat.deleted to {len(participant_ids)} participants for chat {chat_id}")
