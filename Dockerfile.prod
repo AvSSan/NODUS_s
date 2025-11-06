@@ -1,0 +1,64 @@
+# Multi-stage build для оптимизированного production образа
+
+# Stage 1: Сборка зависимостей
+FROM python:3.12-slim AS builder
+
+# Устанавливаем системные зависимости для сборки
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создаем виртуальное окружение
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Копируем файлы проекта
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./
+
+# Устанавливаем зависимости в виртуальное окружение
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -e .
+
+# Stage 2: Финальный минимальный образ
+FROM python:3.12-slim
+
+# Устанавливаем только runtime зависимости
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Копируем виртуальное окружение из builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Устанавливаем PATH для виртуального окружения
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Создаем непривилегированного пользователя
+RUN useradd -m -u 1000 appuser
+
+# Устанавливаем рабочую директорию
+WORKDIR /app
+
+# Копируем приложение
+COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser alembic ./alembic
+COPY --chown=appuser:appuser alembic.ini ./
+
+# Переключаемся на непривилегированного пользователя
+USER appuser
+
+# Открываем порт
+EXPOSE 8000
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+# Запускаем приложение
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

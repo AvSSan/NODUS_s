@@ -40,9 +40,9 @@ Thumbs.db
 
 # Documentation
 docs/
-*.md
-!README.md
+DEPLOYMENT.md
+DOCKER_DEPLOYMENT.md
+QUICK_START_DOCKER.md
 
 # Deployment
 deploy/
-DEPLOYMENT.md

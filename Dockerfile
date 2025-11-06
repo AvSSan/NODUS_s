@@ -11,14 +11,18 @@ RUN apt-get update && apt-get install -y \
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Копируем файлы зависимостей
+# Копируем файлы проекта
 COPY pyproject.toml .
+COPY README.md .
+COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini .
 
 # Устанавливаем зависимости Python
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -e .
 
-# Копируем остальные файлы приложения
+# Копируем остальные файлы (если есть)
 COPY . .
 
 # Открываем порт
