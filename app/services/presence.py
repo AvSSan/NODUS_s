@@ -67,19 +67,35 @@ class PresenceService:
         return result
 
     async def _publish_presence_event(self, user_id: int, status: str) -> None:
-        """Отправить WebSocket событие об изменении статуса"""
+        """Отправить WebSocket событие об изменении статуса
+        
+        Публикуем событие напрямую в персональные каналы всех активных пользователей,
+        так как мы не знаем, кто именно должен получить это обновление
+        """
+        last_seen = await self.redis.get(f"presence:last_seen:{user_id}")
+        if isinstance(last_seen, bytes):
+            last_seen = last_seen.decode("utf-8")
+        
         payload = {
-            "event": "user.presence",
+            "event": "user:presence",
             "data": {
                 "user_id": user_id,
                 "status": status,
-                "timestamp": datetime.utcnow().isoformat(),
+                "last_seen": last_seen,
             },
         }
         payload_json = json.dumps(payload)
         
-        # Публикуем в общий канал присутствия
-        await self.redis.publish("presence:updates", payload_json)
+        # Публикуем в общий канал для всех активных WebSocket соединений
+        # Каждое соединение имеет свой канал ws:user:{user_id}
+        # Найдем всех активных пользователей и отправим им обновление
+        pattern = "ws:user:*"
+        async for key in self.redis.scan_iter(match=pattern, count=100):
+            if isinstance(key, bytes):
+                key = key.decode("utf-8")
+            # Публикуем в персональный канал каждого активного пользователя
+            await self.redis.publish(key, payload_json)
+        
         logger.debug(f"Published presence update for user {user_id}: {status}")
 
 
@@ -114,18 +130,26 @@ class TypingService:
         return keys
 
     async def _publish_typing_event(self, chat_id: int, user_id: int, is_typing: bool) -> None:
-        """Отправить WebSocket событие о наборе текста"""
+        """Отправить WebSocket событие о наборе текста
+        
+        Публикуем событие в персональные каналы всех активных участников чата
+        """
         payload = {
-            "event": "user.typing",
+            "event": "typing",
             "data": {
-                "chat_id": chat_id,
-                "user_id": user_id,
-                "is_typing": is_typing,
+                "chatId": chat_id,
+                "userId": user_id,
+                "isTyping": is_typing,
             },
         }
         payload_json = json.dumps(payload)
         
-        # Публикуем в канал чата
-        channel = f"chat:{chat_id}:typing"
-        await self.redis.publish(channel, payload_json)
+        # Получаем список участников из Redis кэша или публикуем всем активным пользователям
+        # Для простоты публикуем всем активным - фронтенд сам отфильтрует по chatId
+        pattern = "ws:user:*"
+        async for key in self.redis.scan_iter(match=pattern, count=100):
+            if isinstance(key, bytes):
+                key = key.decode("utf-8")
+            await self.redis.publish(key, payload_json)
+        
         logger.debug(f"Published typing event for user {user_id} in chat {chat_id}: {is_typing}")

@@ -48,3 +48,24 @@ class MessageReadRepository(Repository[MessageRead]):
         
         result = await self.session.scalars(stmt)
         return list(result)
+    
+    async def get_unread_count(self, chat_id: int, user_id: int) -> int:
+        """Получить количество непрочитанных сообщений в чате для пользователя"""
+        from app.domain.models import Message
+        from sqlalchemy import func
+        
+        # Подзапрос для прочитанных сообщений
+        read_subquery = select(MessageRead.message_id).where(
+            MessageRead.user_id == user_id
+        ).subquery()
+        
+        # Подсчитываем непрочитанные сообщения
+        stmt = select(func.count(Message.id)).where(
+            Message.chat_id == chat_id,
+            Message.author_id != user_id,
+            Message.is_deleted == False,
+            Message.id.not_in(select(read_subquery))
+        )
+        
+        result = await self.session.scalar(stmt)
+        return result or 0

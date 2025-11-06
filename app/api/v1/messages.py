@@ -183,3 +183,40 @@ async def remove_reaction(
     
     message_service = MessageService(session, redis)
     await message_service.remove_reaction(message_id, current_user, emoji)
+
+
+@router.get("/search", response_model=list[MessageRead])
+async def search_messages(
+    chat_id: int,
+    query: str,
+    limit: int = 50,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_session),
+    current_user: int = Depends(get_current_user),
+) -> list[MessageRead]:
+    """
+    Поиск сообщений в чате по тексту.
+    Query параметры:
+    - chat_id: ID чата для поиска
+    - query: Поисковый запрос (минимум 1 символ)
+    - limit: Максимальное количество результатов (по умолчанию 50)
+    - offset: Смещение для пагинации (по умолчанию 0)
+    """
+    # Проверяем, что поисковый запрос не пустой
+    if not query or len(query.strip()) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Search query cannot be empty",
+        )
+    
+    # Проверяем доступ к чату
+    member_repo = ChatMemberRepository(session)
+    member = await member_repo.get_member(chat_id=chat_id, user_id=current_user)
+    if member is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    
+    # Выполняем поиск
+    repo = MessageRepository(session)
+    messages = await repo.search_in_chat(chat_id, query.strip(), limit=limit, offset=offset)
+    
+    return [MessageRead.model_validate(msg) for msg in messages]

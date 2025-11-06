@@ -11,6 +11,7 @@ from app.api.dependencies import get_redis, get_session
 from app.core import jwt
 from app.core.config import settings
 from app.repositories.user import UserRepository
+from app.services.presence import PresenceService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -60,10 +61,18 @@ async def websocket_endpoint(
     active_connections[user_id] = websocket
     logger.info(f"WebSocket connected: user_id={user_id}")
     
+    # Устанавливаем пользователя онлайн
+    presence_service = PresenceService(redis)
+    await presence_service.set_user_online(user_id)
+    
     # Подписываемся на персональный канал пользователя
     pubsub = redis.pubsub()
     channel = f"ws:user:{user_id}"
     await pubsub.subscribe(channel)
+    
+    # Маркер активного WebSocket соединения для scan_iter
+    ws_marker_key = f"ws:user:{user_id}"
+    await redis.setex(ws_marker_key, 3600, "connected")  # 1 час TTL
     
     try:
         async for message in pubsub.listen():
@@ -84,4 +93,12 @@ async def websocket_endpoint(
         active_connections.pop(user_id, None)
         await pubsub.unsubscribe(channel)
         await pubsub.close()
+        
+        # Удаляем маркер активного соединения
+        ws_marker_key = f"ws:user:{user_id}"
+        await redis.delete(ws_marker_key)
+        
+        # Устанавливаем пользователя оффлайн
+        await presence_service.set_user_offline(user_id)
+        
         logger.info(f"WebSocket cleanup completed for user_id={user_id}")

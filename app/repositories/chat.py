@@ -82,3 +82,27 @@ class ChatMemberRepository(Repository[ChatMember]):
         stmt = select(ChatMember.user_id).where(ChatMember.chat_id == chat_id)
         result = await self.session.execute(stmt)
         return [row[0] for row in result]
+    
+    async def list_members(self, chat_id: int) -> list[ChatMember]:
+        """Получить список всех участников чата с информацией о пользователях"""
+        stmt = (
+            select(ChatMember)
+            .where(ChatMember.chat_id == chat_id)
+            .options(joinedload(ChatMember.user))
+            .order_by(ChatMember.joined_at)
+        )
+        result = await self.session.scalars(stmt)
+        return list(result.unique())
+    
+    async def remove_member(self, chat_id: int, user_id: int) -> bool:
+        """Удалить участника из чата"""
+        member = await self.get_member(chat_id, user_id)
+        if member:
+            await self.session.delete(member)
+            return True
+        return False
+    
+    async def is_admin(self, chat_id: int, user_id: int) -> bool:
+        """Проверить, является ли пользователь админом чата"""
+        member = await self.get_member(chat_id, user_id)
+        return member is not None and member.role == "admin"

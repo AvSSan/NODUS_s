@@ -7,15 +7,6 @@ from pydantic import BaseModel
 from app.schemas.user import UserRead
 
 
-class ChatMemberRead(BaseModel):
-    id: int
-    user: UserRead
-    role: str
-    joined_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
 class ChatCreate(BaseModel):
     title: str
     is_group: bool = True
@@ -32,6 +23,10 @@ class ChatRead(BaseModel):
     is_group: bool
     created_at: datetime
     participants: list[UserRead] = []
+    lastMessagePreview: str | None = None
+    lastMessageAuthor: str | None = None
+    updatedAt: str | None = None
+    unreadCount: int = 0
 
     model_config = {"from_attributes": True}
     
@@ -55,3 +50,20 @@ class ChatRead(BaseModel):
 
 class DirectMessageCreate(BaseModel):
     user_id: int
+
+
+class AddMemberRequest(BaseModel):
+    user_id: int
+
+
+class RemoveMemberRequest(BaseModel):
+    user_id: int
+
+
+class ChatMemberRead(BaseModel):
+    user_id: int
+    role: str
+    joined_at: str
+    user: UserRead
+    
+    model_config = {"from_attributes": True}

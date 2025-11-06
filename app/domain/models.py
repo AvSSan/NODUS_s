@@ -110,3 +110,54 @@ class MessageReaction(Base):
 
     message: Mapped[Message] = relationship(back_populates="reactions")
     user: Mapped[User] = relationship()
+
+
+class Friend(Base):
+    __tablename__ = "friends"
+    __table_args__ = (
+        UniqueConstraint("user_id", "friend_id", name="uq_friends"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    friend_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending", index=True)  # pending, accepted, blocked
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(onupdate=func.now(), nullable=True)
+
+    user: Mapped[User] = relationship("User", foreign_keys=[user_id])
+    friend: Mapped[User] = relationship("User", foreign_keys=[friend_id])
+
+
+class PinnedChat(Base):
+    __tablename__ = "pinned_chats"
+    __table_args__ = (
+        UniqueConstraint("user_id", "chat_id", name="uq_pinned_chat"),
+        Index("ix_pinned_chats_user_order", "user_id", "pin_order"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    chat_id: Mapped[int] = mapped_column(ForeignKey("chats.id", ondelete="CASCADE"), index=True, nullable=False)
+    pin_order: Mapped[int] = mapped_column(nullable=False)
+    pinned_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    user: Mapped[User] = relationship()
+    chat: Mapped[Chat] = relationship()
+
+
+class Attachment(Base):
+    __tablename__ = "attachments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)  # UUID
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    message_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"), index=True, nullable=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False)  # Путь в MinIO
+    meta: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)  # Для хранения duration, waveform и т.д.
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    user: Mapped[User] = relationship()
+    message: Mapped["Message | None"] = relationship()

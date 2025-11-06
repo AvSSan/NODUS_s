@@ -21,10 +21,15 @@ class ChatService:
         self.members = ChatMemberRepository(session)
         self.users = UserRepository(session)
 
-    async def create_chat(self, *, title: str, is_group: bool, member_ids: list[int]) -> Chat:
+    async def create_chat(self, *, title: str, is_group: bool, member_ids: list[int], creator_id: int) -> Chat:
         chat = await self.chats.create(title=title, is_group=is_group)
+        
+        # Добавляем участников
         for user_id in member_ids:
-            await self.members.create(chat_id=chat.id, user_id=user_id)
+            # Создатель группового чата становится админом
+            role = "admin" if is_group and user_id == creator_id else "member"
+            await self.members.create(chat_id=chat.id, user_id=user_id, role=role)
+        
         await self.session.commit()
         # Перезагружаем чат с участниками
         chat = await self.chats.get(chat.id)
@@ -53,6 +58,49 @@ class ChatService:
             await self._publish_chat_deleted_event(chat_id, deleted_by, participant_ids)
         else:
             logger.warning(f"Redis not available, chat.deleted event not sent for chat {chat_id}")
+
+    async def add_member(self, chat: Chat, user_id: int, added_by: int) -> None:
+        """Добавить участника в чат. Только админы могут добавлять в групповые чаты."""
+        if chat.is_group:
+            # Проверяем, что добавляющий является админом
+            is_admin = await self.members.is_admin(chat.id, added_by)
+            if not is_admin:
+                raise ValueError("Only admins can add members to group chats")
+        
+        # Проверяем, что пользователь существует
+        user = await self.users.get(user_id)
+        if not user:
+            raise ValueError("User not found")
+        
+        # Проверяем, что пользователь еще не в чате
+        existing_member = await self.members.get_member(chat.id, user_id)
+        if existing_member:
+            raise ValueError("User is already a member of this chat")
+        
+        # Добавляем участника
+        await self.members.create(chat_id=chat.id, user_id=user_id, role="member")
+        await self.session.commit()
+    
+    async def remove_member(self, chat: Chat, user_id: int, removed_by: int) -> None:
+        """Удалить участника из чата. Только админы могут удалять из групповых чатов."""
+        if not chat.is_group:
+            raise ValueError("Cannot remove members from direct messages")
+        
+        # Проверяем, что удаляющий является админом
+        is_admin = await self.members.is_admin(chat.id, removed_by)
+        if not is_admin:
+            raise ValueError("Only admins can remove members from group chats")
+        
+        # Нельзя удалить самого себя если ты админ (нужно использовать leave)
+        if user_id == removed_by:
+            raise ValueError("Admins cannot remove themselves, use leave instead")
+        
+        # Удаляем участника
+        success = await self.members.remove_member(chat.id, user_id)
+        if not success:
+            raise ValueError("User is not a member of this chat")
+        
+        await self.session.commit()
 
     async def create_or_get_direct_message(self, user1_id: int, user2_id: int) -> Chat:
         """Создать или получить существующую личную переписку между двумя пользователями"""

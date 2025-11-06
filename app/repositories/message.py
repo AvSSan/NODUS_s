@@ -80,3 +80,45 @@ class MessageRepository(Repository[Message]):
         )
         result = await self.session.scalars(stmt)
         return result.first()
+
+    async def search_in_chat(
+        self,
+        chat_id: int,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Message]:
+        """
+        Поиск сообщений в чате по тексту.
+        Использует ILIKE для поиска подстроки (case-insensitive).
+        """
+        stmt = (
+            select(Message)
+            .where(
+                Message.chat_id == chat_id,
+                Message.is_deleted == False,
+                Message.content.ilike(f"%{query}%")
+            )
+            .options(selectinload(Message.reactions))
+            .order_by(Message.ts.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        
+        result = await self.session.scalars(stmt)
+        return list(result)
+    
+    async def get_last_message(self, chat_id: int) -> Message | None:
+        """Получить последнее неудаленное сообщение в чате с автором"""
+        from sqlalchemy.orm import joinedload
+        
+        stmt = (
+            select(Message)
+            .where(Message.chat_id == chat_id, Message.is_deleted == False)
+            .options(joinedload(Message.author))
+            .order_by(Message.ts.desc())
+            .limit(1)
+        )
+        result = await self.session.scalars(stmt)
+        return result.first()

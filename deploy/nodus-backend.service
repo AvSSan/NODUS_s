@@ -1,0 +1,23 @@
+[Unit]
+Description=NODUS Backend FastAPI Application
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=notify
+User=nodus
+Group=nodus
+WorkingDirectory=/home/nodus/NODUS_s
+Environment="PATH=/home/nodus/NODUS_s/venv/bin"
+ExecStart=/home/nodus/NODUS_s/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+Restart=always
+RestartSec=10
+
+# Увеличиваем лимиты для WebSocket соединений
+LimitNOFILE=65536
+
+# Логирование
+StandardOutput=append:/var/log/nodus-backend/access.log
+StandardError=append:/var/log/nodus-backend/error.log
+
+[Install]
+WantedBy=multi-user.target
