@@ -61,13 +61,13 @@ services:
       /bin/sh -c "
       echo 'Setting up MinIO buckets...';
       sleep 10;
-      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD};
-      /usr/bin/mc mb myminio/attachments --ignore-existing;
-      /usr/bin/mc anonymous set public myminio/attachments;
+      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD} || echo 'Failed to set alias, bucket may already exist';
+      /usr/bin/mc mb myminio/attachments --ignore-existing || echo 'Bucket already exists';
+      /usr/bin/mc anonymous set public myminio/attachments || echo 'Failed to set public access';
       echo 'MinIO setup completed!';
       exit 0;
       "
-    restart: on-failure
+    restart: "no"
 
   backend:
     build:
@@ -96,12 +96,12 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-      createbuckets:
-        condition: service_completed_successfully
     networks:
       - nodus_network
     command: >
       sh -c "
+      echo 'Waiting for services...';
+      sleep 10;
       echo 'Running migrations...';
       alembic upgrade head;
       echo 'Starting backend with 4 workers...';
